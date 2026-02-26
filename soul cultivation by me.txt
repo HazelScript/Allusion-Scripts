@@ -1,0 +1,507 @@
+-- Load Kairo
+local Kairo = loadstring(game:HttpGet("https://raw.githubusercontent.com/Itzzavi335/Kairo-Ui-Library/refs/heads/main/source.luau"))()
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local VirtualUser = game:GetService("VirtualUser") 
+
+local player = Players.LocalPlayer
+local harvestRemote = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("Harvest")
+
+-- 💰 Treasure Farm Variables
+local autoTreasure = false
+local treasureFarmId = 0
+local currentTreasureTween = nil
+
+-- 🌿 Herb Farm Variables
+local autoFarm = false
+local selectedHerb = nil
+local farmId = 0
+local currentHerbTween = nil 
+
+-- ⚔️ Enemy Farm Variables
+local autoEnemyFarm = false
+local selectedEnemy = nil
+local enemyFarmId = 0
+local distanceBehind = 4
+local currentEnemyTween = nil 
+
+-- 👁️ ESP Variables
+local enemyESP = false
+local chestESP = false
+
+-- Global Variables
+local tweenSpeed = 50 
+
+-- Helper Function for Prompts
+local function triggerPrompt(prompt)
+    if fireproximityprompt then
+        fireproximityprompt(prompt, 1, true)
+    else
+        prompt.HoldDuration = 0
+        prompt:InputHoldBegin()
+        task.wait(0.05)
+        prompt:InputHoldEnd()
+    end
+end
+
+-- 📱 Mobile Toggle Button
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "MobileToggleGui"
+ScreenGui.ResetOnSpawn = false
+
+local guiSuccess = pcall(function() ScreenGui.Parent = game:GetService("CoreGui") end)
+if not guiSuccess then ScreenGui.Parent = player:WaitForChild("PlayerGui") end
+
+local ToggleBtn = Instance.new("TextButton")
+ToggleBtn.Name = "Toggle"
+ToggleBtn.Size = UDim2.new(0, 45, 0, 45)
+ToggleBtn.Position = UDim2.new(0, 10, 0, 100)
+ToggleBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+ToggleBtn.BorderColor3 = Color3.fromRGB(200, 0, 50)
+ToggleBtn.BorderSizePixel = 2
+ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleBtn.Text = "UI"
+ToggleBtn.TextScaled = true
+ToggleBtn.Font = Enum.Font.GothamBold
+ToggleBtn.Active = true
+ToggleBtn.Draggable = true
+ToggleBtn.Parent = ScreenGui
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = ToggleBtn
+
+ToggleBtn.MouseButton1Click:Connect(function()
+    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.RightShift, false, game)
+    task.wait()
+    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.RightShift, false, game)
+end)
+
+-- Create Window
+local Window = Kairo:CreateWindow({
+    Title = "Allusion Hub | Soul Cultivation",
+    Theme = "Purple",
+    Size = UDim2.fromOffset(520, 520),
+    Center = true,
+    Draggable = true,
+    MinimizeKey = Enum.KeyCode.RightShift,
+    Config = { Enabled = false }
+})
+
+local MainTab = Window:CreateTab("Main Auto", "rbxassetid://16932740082")
+local VisualTab = Window:CreateTab("Visuals", "rbxassetid://16932740082")
+
+-- ==========================================
+-- 👁️ ESP LOGIC
+-- ==========================================
+
+local function createEspTag(object, text, color)
+    if object:FindFirstChild("EspTag") then object.EspTag:Destroy() end
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "EspTag"
+    billboard.Size = UDim2.new(0, 100, 0, 20)
+    billboard.StudsOffset = Vector3.new(0, 2.5, 0)
+    billboard.AlwaysOnTop = true
+    billboard.Parent = object
+
+    local label = Instance.new("TextLabel")
+    label.BackgroundTransparency = 1
+    label.Size = UDim2.new(1, 0, 1, 0)
+    label.Text = text
+    label.TextColor3 = color
+    label.TextSize = 12
+    label.Font = Enum.Font.GothamBold
+    label.TextStrokeTransparency = 0.5
+    label.Parent = billboard
+end
+
+local function getChestRarity(name)
+    local n = name:lower()
+    if n:find("wooden") then return "[Common]", Color3.fromRGB(180, 180, 180)
+    elseif n:find("iron") then return "[Rare]", Color3.fromRGB(0, 200, 255)
+    elseif n:find("gold") then return "[Epic]", Color3.fromRGB(255, 215, 0)
+    elseif n:find("divine") or n:find("legendary") then return "[Legendary]", Color3.fromRGB(255, 100, 0)
+    end
+    return "[Chest]", Color3.fromRGB(255, 255, 255)
+end
+
+local function applyVisuals(object, state, isChest)
+    local highlight = object:FindFirstChild("EspHighlight")
+    if state then
+        if not highlight then
+            highlight = Instance.new("Highlight")
+            highlight.Name = "EspHighlight"
+            highlight.FillTransparency = 0.5
+            highlight.OutlineTransparency = 0.2
+            highlight.Parent = object
+        end
+        if isChest then
+            local rarity, color = getChestRarity(object.Name)
+            highlight.FillColor = color
+            createEspTag(object, rarity .. " " .. object.Name, color)
+        else
+            highlight.FillColor = Color3.fromRGB(255, 50, 50)
+            createEspTag(object, object.Name, Color3.fromRGB(255, 50, 50))
+        end
+    else
+        if highlight then highlight:Destroy() end
+        if object:FindFirstChild("EspTag") then object.EspTag:Destroy() end
+    end
+end
+
+Window:AddToggle(VisualTab, "Enemy ESP", "Show enemies and names", false, function(state)
+    enemyESP = state
+    if not state then
+        for _, v in pairs(workspace.Enemies:GetDescendants()) do 
+            if v.Name == "EspHighlight" or v.Name == "EspTag" then v:Destroy() end 
+        end
+    end
+end)
+
+Window:AddToggle(VisualTab, "Chest ESP", "Show chests and rarity", false, function(state)
+    chestESP = state
+    if not state then
+        for _, v in pairs(workspace.Treasures:GetDescendants()) do 
+            if v.Name == "EspHighlight" or v.Name == "EspTag" then v:Destroy() end 
+        end
+    end
+end)
+
+task.spawn(function()
+    while task.wait(2) do
+        if enemyESP then
+            for _, v in pairs(workspace.Enemies:GetChildren()) do
+                if v:IsA("Model") then applyVisuals(v, true, false) end
+            end
+        end
+        if chestESP then
+            local t = workspace:FindFirstChild("Treasures")
+            if t then
+                for _, v in pairs(t:GetChildren()) do applyVisuals(v, true, true) end
+            end
+        end
+    end
+end)
+
+-- ==========================================
+-- 💰 TREASURE FARM SECTION (TOP)
+-- ==========================================
+
+Window:AddToggle(MainTab, "Auto Collect Treasure", "Auto farms all treasures in workspace", false, function(state)
+    autoTreasure = state
+    
+    -- INSTANT STOP LOGIC
+    if not autoTreasure then
+        treasureFarmId += 1
+        if currentTreasureTween then 
+            currentTreasureTween:Cancel() 
+            currentTreasureTween = nil
+        end
+        local char = player.Character
+        if char and char:FindFirstChild("HumanoidRootPart") then
+            char.HumanoidRootPart.Anchored = false
+        end
+        return
+    end
+    
+    treasureFarmId += 1
+    local currentId = treasureFarmId
+    task.spawn(function()
+        while autoTreasure and currentId == treasureFarmId do
+            local character = player.Character
+            if not character or not character.Parent or not character:FindFirstChild("HumanoidRootPart") or not character:FindFirstChild("Humanoid") or character.Humanoid.Health <= 0 then
+                task.wait(0.5) continue
+            end
+            
+            local root = character.HumanoidRootPart
+            local humanoid = character.Humanoid
+            local treasuresFolder = game:GetService("Workspace"):FindFirstChild("Treasures")
+            
+            if treasuresFolder then
+                for _, chest in pairs(treasuresFolder:GetChildren()) do
+                    if not autoTreasure or currentId ~= treasureFarmId then break end
+                    if not character.Parent or not root.Parent or humanoid.Health <= 0 then break end
+                    
+                    local prompt = chest:FindFirstChildWhichIsA("ProximityPrompt", true)
+                    
+                    if prompt and prompt.Enabled then
+                        local targetPart = chest:FindFirstChild("WoodTop") or prompt.Parent
+                        
+                        if targetPart and targetPart:IsA("BasePart") then
+                            local targetCFrame = targetPart.CFrame + Vector3.new(0, 3, 0)
+                            local distance = (root.Position - targetCFrame.Position).Magnitude
+                            local tweenTime = distance / tweenSpeed
+                            
+                            root.Anchored = true
+                            currentTreasureTween = TweenService:Create(root, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {CFrame = targetCFrame})
+                            currentTreasureTween:Play()
+                            
+                            local tweenCompleted = false
+                            local connection = currentTreasureTween.Completed:Connect(function() tweenCompleted = true end)
+                            
+                            while not tweenCompleted and autoTreasure and currentId == treasureFarmId do
+                                if not character.Parent or not root.Parent or humanoid.Health <= 0 then
+                                    if currentTreasureTween then currentTreasureTween:Cancel() end
+                                    break
+                                end
+                                task.wait(0.05)
+                            end
+                            if connection then connection:Disconnect() end
+                            currentTreasureTween = nil
+                            
+                            if not autoTreasure or currentId ~= treasureFarmId or not character.Parent or not root.Parent or humanoid.Health <= 0 then
+                                if root and root.Parent then root.Anchored = false end
+                                break
+                            end
+                            
+                            if root and root.Parent then
+                                root.Anchored = false
+                                root.AssemblyLinearVelocity = Vector3.zero
+                                root.AssemblyAngularVelocity = Vector3.zero
+                            end
+                            
+                            task.wait(0.2)
+                            local waitTime = 0
+                            while prompt and prompt.Parent and prompt.Enabled and autoTreasure and currentId == treasureFarmId do
+                                triggerPrompt(prompt)
+                                task.wait(0.4)
+                                waitTime += 0.4
+                                if waitTime > 6 then break end
+                            end
+                        end
+                    end
+                end
+            end
+            task.wait(0.2)
+        end
+    end)
+end, "TreasureToggle")
+
+-- ==========================================
+-- 🌿 HERB FARM SECTION
+-- ==========================================
+
+local function getHerbTypes()
+    local herbNames = {}
+    local herbsRoot = workspace:WaitForChild("Herbs", 5)
+    if herbsRoot then
+        for _, herbType in pairs(herbsRoot:GetChildren()) do
+            table.insert(herbNames, herbType.Name)
+        end
+    end
+    table.sort(herbNames)
+    if #herbNames == 0 then table.insert(herbNames, "None Found") end
+    return herbNames
+end
+
+Window:AddDropdown(MainTab, "Select Herb", "Choose which herb to farm", getHerbTypes(), false, nil, function(value)
+    selectedHerb = value
+end, "HerbDropdown")
+
+Window:AddToggle(MainTab, "Auto Farm Herb", "Enable herb auto farming", false, function(state)
+    autoFarm = state
+    
+    if not autoFarm then
+        farmId += 1
+        if currentHerbTween then 
+            currentHerbTween:Cancel() 
+            currentHerbTween = nil
+        end
+        local char = player.Character
+        if char and char:FindFirstChild("HumanoidRootPart") then
+            char.HumanoidRootPart.Anchored = false
+        end
+        return
+    end
+    
+    farmId += 1
+    local currentId = farmId
+    task.spawn(function()
+        while autoFarm and currentId == farmId do
+            if not selectedHerb then task.wait(0.2) continue end
+            local character = player.Character
+            if not character or not character.Parent or not character:FindFirstChild("HumanoidRootPart") or not character:FindFirstChild("Humanoid") or character.Humanoid.Health <= 0 then
+                task.wait(0.5) continue
+            end
+            local root = character.HumanoidRootPart
+            local humanoid = character.Humanoid
+            local herbType = workspace:FindFirstChild("Herbs") and workspace.Herbs:FindFirstChild(selectedHerb)
+            if herbType then
+                local folder = herbType:FindFirstChild("Folder")
+                if folder then
+                    for _, herb in pairs(folder:GetChildren()) do
+                        if not autoFarm or currentId ~= farmId then break end
+                        if not character.Parent or not root.Parent or humanoid.Health <= 0 then break end
+                        local zone = herb:FindFirstChild("HerbZone", true)
+                        if zone and zone:IsA("BasePart") then
+                            local targetCFrame = zone.CFrame + Vector3.new(0, 1, 0)
+                            local distance = (root.Position - targetCFrame.Position).Magnitude
+                            local tweenTime = distance / tweenSpeed
+                            root.Anchored = true
+                            currentHerbTween = TweenService:Create(root, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {CFrame = targetCFrame})
+                            currentHerbTween:Play()
+                            local tweenCompleted = false
+                            local connection = currentHerbTween.Completed:Connect(function() tweenCompleted = true end)
+                            while not tweenCompleted and autoFarm and currentId == farmId do
+                                if not character.Parent or not root.Parent or humanoid.Health <= 0 then
+                                    if currentHerbTween then currentHerbTween:Cancel() end
+                                    break
+                                end
+                                task.wait(0.05)
+                            end
+                            if connection then connection:Disconnect() end
+                            currentHerbTween = nil
+                            if not autoFarm or currentId ~= farmId or not character.Parent or not root.Parent or humanoid.Health <= 0 then
+                                if root and root.Parent then root.Anchored = false end
+                                break
+                            end
+                            if root and root.Parent then
+                                root.Anchored = false
+                                root.AssemblyLinearVelocity = Vector3.zero
+                                root.AssemblyAngularVelocity = Vector3.zero
+                            end
+                            task.wait(0.4)
+                            if not character.Parent or not root.Parent or humanoid.Health <= 0 then break end
+                            if herb.Parent and herb:IsDescendantOf(workspace) and autoFarm and currentId == farmId then
+                                for _, v in pairs(herb:GetDescendants()) do
+                                    if v:IsA("ProximityPrompt") and v.Enabled then triggerPrompt(v) end
+                                end
+                                pcall(function() harvestRemote:FireServer() end)
+                                local waitTime = 0
+                                while herb.Parent and herb:IsDescendantOf(workspace) and autoFarm and currentId == farmId do
+                                    if not character.Parent or not root.Parent or humanoid.Health <= 0 then break end
+                                    task.wait(0.2) 
+                                    waitTime += 0.2
+                                    if waitTime > 30 then break end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            task.wait(0.1)
+        end
+    end)
+end, "HerbToggle")
+
+-- ==========================================
+-- ⚔️ ENEMY FARM SECTION
+-- ==========================================
+
+local function getEnemyNames()
+    local enemyNames = {}
+    local foundNames = {}
+    local folder = workspace:FindFirstChild("Enemies")
+    if folder then
+        for _, obj in pairs(folder:GetChildren()) do
+            if obj:IsA("Model") and obj:FindFirstChild("HumanoidRootPart") and obj:FindFirstChild("Humanoid") then
+                if not foundNames[obj.Name] then
+                    foundNames[obj.Name] = true
+                    table.insert(enemyNames, obj.Name)
+                end
+            end
+        end
+    end
+    table.sort(enemyNames)
+    if #enemyNames == 0 then table.insert(enemyNames, "None Found") end
+    return enemyNames
+end
+
+Window:AddDropdown(MainTab, "Select Enemy", "Choose which enemy to farm", getEnemyNames(), false, nil, function(value)
+    selectedEnemy = value
+end, "EnemyDropdown")
+
+-- Decimal Slider: Default set to 45 (4.5 Studs)
+Window:AddSlider(MainTab, "Distance Behind", "11 = 1.1 Studs | 45 = 4.5 Studs", 10, 150, 45, function(value)
+    distanceBehind = value / 10
+end, "DistanceSlider")
+
+Window:AddToggle(MainTab, "Auto Farm Enemy", "Enable enemy auto farming", false, function(state)
+    autoEnemyFarm = state
+    if not autoEnemyFarm then
+        enemyFarmId += 1
+        if currentEnemyTween then currentEnemyTween:Cancel() currentEnemyTween = nil end
+        local char = player.Character
+        if char and char:FindFirstChild("HumanoidRootPart") then char.HumanoidRootPart.Anchored = false end
+        return
+    end
+    enemyFarmId += 1
+    local currentId = enemyFarmId
+    task.spawn(function()
+        while autoEnemyFarm and currentId == enemyFarmId do
+            if selectedEnemy == nil or selectedEnemy == "None Found" then task.wait(0.5) continue end
+            local character = player.Character
+            if not character or not character.Parent or not character:FindFirstChild("HumanoidRootPart") or not character:FindFirstChild("Humanoid") or character.Humanoid.Health <= 0 then
+                task.wait(0.5) continue
+            end
+            local root = character.HumanoidRootPart
+            local humanoid = character.Humanoid
+            local target = nil
+            local enemyFolder = workspace:FindFirstChild("Enemies")
+            if enemyFolder then
+                for _, obj in pairs(enemyFolder:GetChildren()) do
+                    if obj.Name == selectedEnemy and obj:FindFirstChild("Humanoid") and obj.Humanoid.Health > 0 and obj:FindFirstChild("HumanoidRootPart") then
+                        target = obj
+                        break
+                    end
+                end
+            end
+            if not target then task.wait(0.5) continue end
+            local targetRoot = target.HumanoidRootPart
+            local targetHum = target.Humanoid
+            local tool = character:FindFirstChild("Light") or player.Backpack:FindFirstChild("Light")
+            if tool and tool.Parent ~= character then humanoid:EquipTool(tool) end
+            local targetDistance = (root.Position - targetRoot.Position).Magnitude
+            if targetDistance > 10 then
+                local tweenTime = targetDistance / tweenSpeed
+                root.Anchored = true
+                currentEnemyTween = TweenService:Create(root, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {CFrame = targetRoot.CFrame * CFrame.new(0, 0, distanceBehind)})
+                currentEnemyTween:Play()
+                while currentEnemyTween and currentEnemyTween.PlaybackState == Enum.PlaybackState.Playing and autoEnemyFarm and currentId == enemyFarmId do
+                    if not targetRoot.Parent or targetHum.Health <= 0 or not character.Parent or humanoid.Health <= 0 then
+                        currentEnemyTween:Cancel() break
+                    end
+                    task.wait(0.05)
+                end
+                currentEnemyTween = nil
+                if root and root.Parent then root.Anchored = false end
+            end
+            local clickTimer = tick()
+            while autoEnemyFarm and currentId == enemyFarmId and targetRoot.Parent and targetHum.Health > 0 and character.Parent and humanoid.Health > 0 do
+                root.CFrame = targetRoot.CFrame * CFrame.new(0, 0, distanceBehind)
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+                tool = character:FindFirstChild("Light") or player.Backpack:FindFirstChild("Light")
+                if tool then
+                    if tool.Parent ~= character then humanoid:EquipTool(tool) end
+                    if tick() - clickTimer >= 0.1 then
+                        clickTimer = tick()
+                        tool:Activate() 
+                        VirtualUser:CaptureController()
+                        VirtualUser:ClickButton1(Vector2.zero) 
+                    end
+                end
+                task.wait()
+            end
+            task.wait(0.1)
+        end
+    end)
+end, "EnemyToggle")
+
+-- ==========================================
+-- ⚙️ SETTINGS SECTION
+-- ==========================================
+
+Window:AddSlider(MainTab, "Tween Speed", "Adjust global travel speed", 10, 250, 50, function(value)
+    tweenSpeed = tonumber(value) or 50
+end, "TweenSpeedSlider")
+
+Window:Notify({
+    Title = "Script Loaded",
+    Description = "Farms and Visuals Ready",
+    Content = "Made By Minou",
+    Color = Color3.fromRGB(191, 0, 255),
+    Delay = 4
+})
